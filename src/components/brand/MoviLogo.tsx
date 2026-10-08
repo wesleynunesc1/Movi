@@ -1,5 +1,5 @@
 import React from 'react';
-import { MoviSymbol, type MoviSymbolProps } from './MoviSymbol';
+import { MoviSymbol } from './MoviSymbol';
 
 export interface MoviLogoProps {
   variant?: 'full' | 'horizontal' | 'symbol';
@@ -16,55 +16,71 @@ export const MoviLogo: React.FC<MoviLogoProps> = ({
   className = '',
   showTagline,
 }) => {
-  // Dimension definitions
-  const dimensions = {
-    sm: { symbol: 24, text: 'text-lg', tag: 'text-[9px]' },
-    md: { symbol: 32, text: 'text-2xl', tag: 'text-[11px]' },
-    lg: { symbol: 40, text: 'text-3xl', tag: 'text-xs' },
-    xl: { symbol: 52, text: 'text-4xl', tag: 'text-sm' },
-  }[size];
-
-  // Theme text colors
-  const textColors = {
-    graphite: 'text-movi-graphite',
-    white: 'text-white',
-    'on-yellow': 'text-movi-graphite',
-    yellow: 'text-movi-yellow',
-  }[theme];
-
-  const tagColors = {
-    graphite: 'text-text-secondary',
-    white: 'text-gray-400',
-    'on-yellow': 'text-movi-graphite/80',
-    yellow: 'text-movi-yellow/80',
-  }[theme];
-
-  const symbolTheme: MoviSymbolProps['theme'] = 
-    theme === 'white' ? 'white' :
-    theme === 'on-yellow' ? 'on-yellow' : 'yellow';
-
   if (variant === 'symbol') {
-    return <MoviSymbol size={dimensions.symbol} theme={symbolTheme} className={className} />;
+    const symbolSizes = {
+      sm: 24,
+      md: 32,
+      lg: 42,
+      xl: 56,
+    }[size];
+    return <MoviSymbol size={symbolSizes} className={className} />;
   }
 
-  const isFull = variant === 'full' || showTagline;
+  // Se o tema for branco (para a sidebar escura #111111)
+  if (theme === 'white') {
+    const textSizes = {
+      sm: 'text-base',
+      md: 'text-xl',
+      lg: 'text-2xl',
+      xl: 'text-3xl',
+    }[size];
+
+    const symbolSizes = {
+      sm: 24,
+      md: 32,
+      lg: 40,
+      xl: 52,
+    }[size];
+
+    const isFull = variant === 'full' || showTagline;
+
+    return (
+      <div className={`inline-flex items-center gap-2.5 select-none ${className}`}>
+        <MoviSymbol size={symbolSizes} />
+        <div className="flex flex-col leading-none">
+          <div className="flex items-center gap-1">
+            <span className={`font-display font-black tracking-wide text-white uppercase ${textSizes}`}>
+              MOVI
+            </span>
+            <span className="text-[9px] text-gray-400 font-bold">&reg;</span>
+          </div>
+          {isFull && (
+            <span className="text-[9px] font-sans font-medium text-gray-400 uppercase tracking-tight mt-0.5">
+              gestão comercial inteligente
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Para temas em fundos claros ou amarelo (Login, Onboarding, Header, etc.):
+  // Renderiza diretamente a logomarca oficial v1.png
+  const heightClasses = {
+    sm: 'h-7',
+    md: 'h-9',
+    lg: 'h-12',
+    xl: 'h-16',
+  }[size];
 
   return (
-    <div className={`inline-flex items-center gap-3 select-none ${className}`}>
-      <MoviSymbol size={dimensions.symbol} theme={symbolTheme} />
-      <div className="flex flex-col leading-none">
-        <div className="flex items-baseline tracking-tight">
-          <span className={`font-display font-extrabold tracking-wider uppercase ${dimensions.text} ${textColors}`}>
-            MOVI
-          </span>
-          <span className="w-1.5 h-1.5 rounded-full bg-movi-yellow ml-1 mb-0.5 inline-block shrink-0" />
-        </div>
-        {isFull && (
-          <span className={`font-sans font-medium tracking-normal mt-1 uppercase ${dimensions.tag} ${tagColors}`}>
-            Gestão Comercial Inteligente
-          </span>
-        )}
-      </div>
+    <div className={`inline-flex items-center select-none ${className}`}>
+      <img
+        src="/brand/logo.png"
+        alt="MOVI — Gestão Comercial Inteligente"
+        className={`${heightClasses} w-auto object-contain shrink-0`}
+        loading="eager"
+      />
     </div>
   );
 };
