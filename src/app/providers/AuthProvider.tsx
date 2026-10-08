@@ -329,12 +329,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     primary_color?: string;
   }) => {
     if (!user) {
-      return { company: null, error: new Error('Usuário não autenticado') };
+      return { company: null, error: new Error('Usuário não autenticado. Faça login novamente.') };
     }
 
     if (isSupabaseConfigured && supabase) {
       try {
-        // Call atomic database function
+        // 1. Tentar executar a função atômica RPC
         const { data: rpcData, error: rpcError } = await supabase.rpc('create_company_atomic', {
           p_name: data.name,
           p_business_type: data.business_type || 'Geral',
@@ -346,8 +346,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         if (rpcError) {
-          // If RPC fails (e.g. migration not run), execute standard table inserts
-          const slug = data.name.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Math.floor(Math.random() * 1000);
+          console.warn('RPC create_company_atomic falhou, executando inserção direta:', rpcError);
+          // Inserção direta resiliente via tabelas
+          const slug = data.name.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Math.floor(Math.random() * 10000);
           const { data: comp, error: compErr } = await supabase
             .from('companies')
             .insert({
@@ -359,8 +360,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .select()
             .single();
 
-          if (compErr) return { company: null, error: compErr };
+          if (compErr) {
+            console.error('Erro na criação de company:', compErr);
+            return {
+              company: null,
+              error: new Error(
+                compErr.message.includes('recursion')
+                  ? 'Aviso do banco: execute o script 003_fix_rls_recursion.sql no Supabase SQL Editor para corrigir a permissão RLS.'
+                  : compErr.message
+              ),
+            };
+          }
 
+          // Inserir membro proprietário
           await supabase.from('company_members').insert({
             company_id: comp.id,
             user_id: user.id,
@@ -368,6 +380,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             status: 'active',
           });
 
+          // Inserir configurações
           await supabase.from('company_settings').insert({
             company_id: comp.id,
             phone: data.phone || null,
@@ -377,14 +390,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             primary_color: data.primary_color || '#FFD600',
           });
 
-          await refreshUserData();
-          return { company: comp as CompanyWithDetails, error: null };
+          const directCompany: CompanyWithDetails = {
+            ...comp,
+            role: 'owner',
+            settings: {
+              company_id: comp.id,
+              logo_url: null,
+              primary_color: data.primary_color || '#FFD600',
+              phone: data.phone || null,
+              whatsapp: data.whatsapp || null,
+              address: null,
+              city: data.city || null,
+              state: data.state || null,
+              business_document: null,
+              updated_at: new Date().toISOString(),
+            },
+          };
+
+          setCompanies((prev) => [...prev.filter((c) => c.id !== directCompany.id), directCompany]);
+          setCurrentCompany(directCompany);
+          localStorage.setItem(LOCAL_ACTIVE_COMPANY_ID, directCompany.id);
+          return { company: directCompany, error: null };
         }
 
-        await refreshUserData();
-        const createdComp = companies.find((c) => c.id === rpcData.id) || null;
-        return { company: createdComp, error: null };
+        // RPC executado com sucesso
+        const createdCompany: CompanyWithDetails = {
+          id: rpcData.id,
+          name: rpcData.name || data.name,
+          slug: rpcData.slug,
+          owner_user_id: user.id,
+          business_type: data.business_type || 'Geral',
+          currency: 'BRL',
+          timezone: 'America/Sao_Paulo',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          role: 'owner',
+          settings: {
+            company_id: rpcData.id,
+            logo_url: null,
+            primary_color: data.primary_color || '#FFD600',
+            phone: data.phone || null,
+            whatsapp: data.whatsapp || null,
+            address: null,
+            city: data.city || null,
+            state: data.state || null,
+            business_document: null,
+            updated_at: new Date().toISOString(),
+          },
+        };
+
+        setCompanies((prev) => [...prev.filter((c) => c.id !== createdCompany.id), createdCompany]);
+        setCurrentCompany(createdCompany);
+        localStorage.setItem(LOCAL_ACTIVE_COMPANY_ID, createdCompany.id);
+        return { company: createdCompany, error: null };
       } catch (err: any) {
+        console.error('Exceção ao criar empresa:', err);
         return { company: null, error: err };
       }
     } else {

@@ -59,9 +59,9 @@ export const OnboardingPage: React.FC = () => {
 
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // If user already has an active company, prevent duplicate onboarding
+  // Se o usuário já possuir uma empresa antes de iniciar o onboarding, vai direto para o dashboard
   useEffect(() => {
-    if (currentCompany && step !== 4) {
+    if (currentCompany && step === 1) {
       navigate('/app/dashboard');
     }
   }, [currentCompany, navigate, step]);
@@ -90,18 +90,18 @@ export const OnboardingPage: React.FC = () => {
       });
 
       if (error) {
-        toastError('Não foi possível salvar', error.message);
+        toastError('Aviso ao salvar', error.message);
         setValidationError(error.message);
         setIsSubmitting(false);
         return;
       }
 
-      if (company) {
-        success('Empresa configurada!', 'Seu ambiente MOVI está pronto.');
-        setStep(4);
-      }
+      success('Empresa configurada!', 'Seu ambiente MOVI está pronto.');
+      setStep(4);
     } catch (err: any) {
-      toastError('Erro ao finalizar', err?.message || 'Falha de comunicação');
+      const msg = err?.message || 'Falha de comunicação ao salvar';
+      toastError('Erro ao finalizar', msg);
+      setValidationError(msg);
     } finally {
       setIsSubmitting(false);
     }
