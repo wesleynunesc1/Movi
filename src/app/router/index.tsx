@@ -9,10 +9,10 @@ import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { ProductsPage } from '@/features/products/ProductsPage';
 import { InventoryPage } from '@/features/inventory/InventoryPage';
+import { POSPage } from '@/features/pos/POSPage';
+import { SalesPage } from '@/features/sales/SalesPage';
+import { OrdersPage } from '@/features/orders/OrdersPage';
 import {
-  POSPage,
-  SalesPage,
-  OrdersPage,
   CustomersPage,
   FinancePage,
   ReportsPage,

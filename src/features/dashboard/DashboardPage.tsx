@@ -24,12 +24,24 @@ import {
 
 import { productsService } from '@/services/productsService';
 import { inventoryService } from '@/services/inventoryService';
+import { salesService } from '@/services/salesService';
+import { ordersService } from '@/services/ordersService';
 import type { InventorySummary } from '@/types/inventory';
+import type { SalesSummary, Sale } from '@/types/sales';
 
 export const DashboardPage: React.FC = () => {
   const { currentCompany, profile } = useAuth();
   const [chartFilter, setChartFilter] = useState<'7d' | '30d' | '90d'>('7d');
   const [productCount, setProductCount] = useState<number>(0);
+  const [ordersCount, setOrdersCount] = useState<number>(0);
+  const [recentSales, setRecentSales] = useState<Sale[]>([]);
+  const [salesSummary, setSalesSummary] = useState<SalesSummary>({
+    todaySalesCount: 0,
+    todaySalesTotal: 0,
+    monthSalesTotal: 0,
+    averageTicket: 0,
+    completedCount: 0,
+  });
   const [inventorySummary, setInventorySummary] = useState<InventorySummary>({
     totalActiveProducts: 0,
     totalUnitsInStock: 0,
@@ -44,13 +56,19 @@ export const DashboardPage: React.FC = () => {
     let isMounted = true;
     async function loadStats() {
       try {
-        const [prodRes, invSum] = await Promise.all([
+        const [prodRes, invSum, salesSum, salesList, ords] = await Promise.all([
           productsService.list(companyId, { limit: 1 }),
           inventoryService.getSummary(companyId),
+          salesService.getSummary(companyId),
+          salesService.list(companyId, { limit: 5, status: 'completed' }),
+          ordersService.list(companyId, 'all'),
         ]);
         if (isMounted) {
           setProductCount(prodRes.total);
           setInventorySummary(invSum);
+          setSalesSummary(salesSum);
+          setRecentSales(salesList.sales);
+          setOrdersCount(ords.length);
         }
       } catch (e) {
         console.error('Erro ao carregar estatísticas do dashboard:', e);
@@ -81,7 +99,9 @@ export const DashboardPage: React.FC = () => {
 
   // Real initial checklist data derived from DB state
   const hasProducts = productCount > 0;
-  const completedStepsCount = (currentCompany?.id ? 1 : 0) + (hasProducts ? 1 : 0);
+  const hasSales = salesSummary.completedCount > 0;
+  const completedStepsCount =
+    (currentCompany?.id ? 1 : 0) + (hasProducts ? 1 : 0) + (hasSales ? 1 : 0);
 
   const checklist = [
     {
@@ -103,8 +123,10 @@ export const DashboardPage: React.FC = () => {
     {
       id: 'sale',
       title: 'Registrar primeira venda',
-      description: 'Faça um teste no PDV ou registre um pedido manual',
-      completed: false,
+      description: hasSales
+        ? `${salesSummary.completedCount} venda(s) registrada(s) com sucesso`
+        : 'Faça uma venda no PDV para testar o fluxo comercial',
+      completed: hasSales,
       link: '/app/pos',
     },
     {
@@ -174,10 +196,10 @@ export const DashboardPage: React.FC = () => {
             </div>
             <div className="mt-3">
               <div className="text-2xl sm:text-3xl font-bold font-display text-movi-graphite">
-                {formatCurrency(0)}
+                {formatCurrency(salesSummary.todaySalesTotal)}
               </div>
               <p className="text-[11px] text-text-secondary mt-1 flex items-center gap-1">
-                <span>0 transações hoje</span>
+                <span>{salesSummary.todaySalesCount} transação(ões) hoje</span>
               </p>
             </div>
           </CardContent>
@@ -197,7 +219,7 @@ export const DashboardPage: React.FC = () => {
             </div>
             <div className="mt-3">
               <div className="text-2xl sm:text-3xl font-bold font-display text-movi-graphite">
-                {formatCurrency(0)}
+                {formatCurrency(salesSummary.monthSalesTotal)}
               </div>
               <p className="text-[11px] text-text-secondary mt-1">
                 Período vigente do mês
@@ -220,10 +242,10 @@ export const DashboardPage: React.FC = () => {
             </div>
             <div className="mt-3">
               <div className="text-2xl sm:text-3xl font-bold font-display text-movi-graphite">
-                0
+                {ordersCount}
               </div>
               <p className="text-[11px] text-text-secondary mt-1">
-                0 pendentes de entrega
+                em separação e entrega
               </p>
             </div>
           </CardContent>
@@ -243,7 +265,7 @@ export const DashboardPage: React.FC = () => {
             </div>
             <div className="mt-3">
               <div className="text-2xl sm:text-3xl font-bold font-display text-movi-graphite">
-                {formatCurrency(0)}
+                {formatCurrency(salesSummary.averageTicket)}
               </div>
               <p className="text-[11px] text-text-secondary mt-1">
                 Baseado em vendas confirmadas
@@ -422,20 +444,64 @@ export const DashboardPage: React.FC = () => {
               </div>
             </CardHeader>
 
-            <CardContent className="flex-1 flex flex-col justify-center py-8">
-              {/* Honest empty state specified by Section 8 */}
-              <EmptyState
-                icon={<BarChart2 className="w-6 h-6 text-text-secondary" />}
-                title="Nenhum dado registrado neste período"
-                description="Assim que você registrar suas primeiras vendas, seus resultados aparecerão aqui."
-                action={
-                  <Link to="/app/pos">
-                    <Button variant="primary" size="sm" leftIcon={<PlusCircle className="w-3.5 h-3.5" />}>
-                      Registrar primeira venda
-                    </Button>
-                  </Link>
-                }
-              />
+            <CardContent className="flex-1 flex flex-col justify-center py-4">
+              {recentSales.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="divide-y divide-border">
+                    {recentSales.map((s) => (
+                      <div
+                        key={s.id}
+                        className="py-2.5 flex items-center justify-between text-xs hover:bg-neutral-50 px-2 rounded-lg transition"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold">
+                            <Receipt className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <span className="font-bold text-neutral-900 block font-mono">
+                              {s.sale_number}
+                            </span>
+                            <span className="text-[11px] text-neutral-400">
+                              {new Date(s.created_at).toLocaleDateString('pt-BR')} &bull;{' '}
+                              {s.customer ? s.customer.name : 'Venda balcão'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <span className="font-extrabold text-[#111111] font-mono block">
+                            {formatCurrency(s.total_amount)}
+                          </span>
+                          <span className="text-[10px] text-emerald-600 font-semibold">
+                            Concluída
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="pt-2 border-t border-border flex justify-end">
+                    <Link to="/app/sales">
+                      <Button variant="outline" size="sm" className="text-xs">
+                        Ver histórico completo &rarr;
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <EmptyState
+                  icon={<BarChart2 className="w-6 h-6 text-text-secondary" />}
+                  title="Nenhum dado registrado neste período"
+                  description="Assim que você registrar suas primeiras vendas, seus resultados aparecerão aqui."
+                  action={
+                    <Link to="/app/pos">
+                      <Button variant="primary" size="sm" leftIcon={<PlusCircle className="w-3.5 h-3.5" />}>
+                        Registrar primeira venda
+                      </Button>
+                    </Link>
+                  }
+                />
+              )}
             </CardContent>
           </Card>
         </div>
