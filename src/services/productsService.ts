@@ -189,6 +189,60 @@ export const productsService = {
     };
   },
 
+  async uploadImageToStorage(companyId: string, productId: string, base64OrUrl: string, index: number): Promise<string> {
+    if (!isSupabaseConfigured || !supabase) return base64OrUrl;
+
+    // Se já for uma URL externa ou URL pública do Supabase, retorna direto
+    if (base64OrUrl.startsWith('http://') || base64OrUrl.startsWith('https://')) {
+      return base64OrUrl;
+    }
+
+    // Se for data URL base64, tentar converter e subir no bucket do Supabase Storage
+    if (base64OrUrl.startsWith('data:image/')) {
+      try {
+        const match = base64OrUrl.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+        if (match) {
+          const rawExt = match[1];
+          const ext = rawExt === 'jpeg' ? 'jpg' : rawExt;
+          const base64Data = match[2];
+          const byteCharacters = atob(base64Data);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: `image/${rawExt}` });
+
+          const fileName = `${Date.now()}_${index}.${ext}`;
+          const filePath = `${companyId}/${productId}/${fileName}`;
+
+          const { data, error } = await supabase.storage
+            .from('product-images')
+            .upload(filePath, blob, {
+              contentType: `image/${rawExt}`,
+              upsert: true,
+            });
+
+          if (!error && data) {
+            const { data: publicUrlData } = supabase.storage
+              .from('product-images')
+              .getPublicUrl(filePath);
+
+            if (publicUrlData?.publicUrl) {
+              return publicUrlData.publicUrl;
+            }
+          } else if (error) {
+            console.warn('Erro ao subir para o Supabase Storage (usando fallback data-uri):', error.message);
+          }
+        }
+      } catch (err) {
+        console.warn('Falha no upload para Storage, utilizando base64 como fallback:', err);
+      }
+    }
+
+    return base64OrUrl;
+  },
+
   async create(companyId: string, payload: Partial<Product> & { initialStock?: number; initialMinStock?: number }): Promise<Product> {
     const list = getLocalProducts(companyId);
     if (list.length >= 200) {
@@ -247,8 +301,72 @@ export const productsService = {
         if (!error && dbProd) {
           newProduct.id = dbProd.id;
 
-          // Register initial inventory movement if tracking
-          if (newProduct.track_inventory && (payload.initialStock || payload.initialMinStock)) {
+          // 1. Inserir imagens no banco (tabela product_images) e no Supabase Storage
+          if (payload.images && payload.images.length > 0) {
+            const imagesToInsert = [];
+            for (let i = 0; i < payload.images.length; i++) {
+              const img = payload.images[i];
+              const uploadedPath = await this.uploadImageToStorage(companyId, dbProd.id, img.storage_path, i);
+              imagesToInsert.push({
+                company_id: companyId,
+                product_id: dbProd.id,
+                storage_path: uploadedPath,
+                sort_order: i,
+                is_primary: Boolean(img.is_primary ?? i === 0),
+              });
+            }
+
+            const { data: dbImgs, error: imgError } = await supabase
+              .from('product_images')
+              .insert(imagesToInsert)
+              .select();
+
+            if (!imgError && dbImgs) {
+              newProduct.images = dbImgs;
+            } else if (imgError) {
+              console.error('Erro ao salvar imagens no banco Supabase:', imgError);
+            }
+          }
+
+          // 2. Inserir variantes no banco (tabela product_variants)
+          if (payload.has_variants && payload.variants && payload.variants.length > 0) {
+            const variantsData = payload.variants.map((v) => ({
+              company_id: companyId,
+              product_id: dbProd.id,
+              sku: v.sku,
+              barcode: v.barcode || null,
+              combination_key: v.combination_key,
+              cost_price_override: v.cost_price_override ? Number(v.cost_price_override) : null,
+              sale_price_override: v.sale_price_override ? Number(v.sale_price_override) : null,
+              is_active: v.is_active ?? true,
+            }));
+
+            const { data: insertedVars } = await supabase
+              .from('product_variants')
+              .insert(variantsData)
+              .select();
+
+            if (insertedVars) {
+              newProduct.variants = insertedVars;
+              for (const iv of insertedVars) {
+                const origVar = payload.variants.find((v) => v.combination_key === iv.combination_key);
+                if (origVar && (origVar.quantity_on_hand || origVar.minimum_quantity)) {
+                  await inventoryService.recordMovement({
+                    company_id: companyId,
+                    product_id: dbProd.id,
+                    variant_id: iv.id,
+                    movement_type: 'initial',
+                    quantity: Number(origVar.quantity_on_hand) || 0,
+                    reason: 'Estoque inicial da variação',
+                    minimum_quantity: Number(origVar.minimum_quantity) || 0,
+                  });
+                }
+              }
+            }
+          }
+
+          // 3. Registrar movimentação de estoque inicial se tracking habilitado em item simples
+          if (!payload.has_variants && newProduct.track_inventory && (payload.initialStock || payload.initialMinStock)) {
             await inventoryService.recordMovement({
               company_id: companyId,
               product_id: dbProd.id,
@@ -269,7 +387,7 @@ export const productsService = {
     saveLocalProducts(companyId, list);
 
     // Also register local inventory movement
-    if (newProduct.track_inventory && (payload.initialStock || payload.initialMinStock)) {
+    if (!payload.has_variants && newProduct.track_inventory && (payload.initialStock || payload.initialMinStock)) {
       await inventoryService.recordMovement({
         company_id: companyId,
         product_id: newProduct.id,
@@ -305,6 +423,53 @@ export const productsService = {
             updated_at: new Date().toISOString(),
           })
           .eq('id', id);
+
+        // Sincronizar imagens no Supabase (tabela product_images)
+        if (payload.images !== undefined) {
+          await supabase.from('product_images').delete().eq('product_id', id);
+
+          if (payload.images.length > 0) {
+            const imagesToInsert = [];
+            for (let i = 0; i < payload.images.length; i++) {
+              const img = payload.images[i];
+              const uploadedPath = await this.uploadImageToStorage(companyId, id, img.storage_path, i);
+              imagesToInsert.push({
+                company_id: companyId,
+                product_id: id,
+                storage_path: uploadedPath,
+                sort_order: i,
+                is_primary: Boolean(img.is_primary ?? i === 0),
+              });
+            }
+
+            const { data: dbImgs, error: imgErr } = await supabase
+              .from('product_images')
+              .insert(imagesToInsert)
+              .select();
+
+            if (!imgErr && dbImgs) {
+              payload.images = dbImgs;
+            }
+          }
+        }
+
+        // Sincronizar variantes no Supabase (tabela product_variants)
+        if (payload.has_variants && payload.variants !== undefined) {
+          await supabase.from('product_variants').delete().eq('product_id', id);
+          if (payload.variants.length > 0) {
+            const variantsData = payload.variants.map((v) => ({
+              company_id: companyId,
+              product_id: id,
+              sku: v.sku,
+              barcode: v.barcode || null,
+              combination_key: v.combination_key,
+              cost_price_override: v.cost_price_override ? Number(v.cost_price_override) : null,
+              sale_price_override: v.sale_price_override ? Number(v.sale_price_override) : null,
+              is_active: v.is_active ?? true,
+            }));
+            await supabase.from('product_variants').insert(variantsData);
+          }
+        }
       } catch (e) {
         console.warn('Erro ao atualizar produto no Supabase:', e);
       }
