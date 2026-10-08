@@ -7,12 +7,12 @@ import { OnboardingPage } from '@/features/onboarding/OnboardingPage';
 import { AppLayout } from '@/app/layouts/AppLayout';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
+import { ProductsPage } from '@/features/products/ProductsPage';
+import { InventoryPage } from '@/features/inventory/InventoryPage';
 import {
   POSPage,
   SalesPage,
   OrdersPage,
-  ProductsPage,
-  InventoryPage,
   CustomersPage,
   FinancePage,
   ReportsPage,

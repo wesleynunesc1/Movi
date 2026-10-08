@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/app/providers/AuthProvider';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
@@ -22,9 +22,45 @@ import {
   ExternalLink,
 } from 'lucide-react';
 
+import { productsService } from '@/services/productsService';
+import { inventoryService } from '@/services/inventoryService';
+import type { InventorySummary } from '@/types/inventory';
+
 export const DashboardPage: React.FC = () => {
   const { currentCompany, profile } = useAuth();
   const [chartFilter, setChartFilter] = useState<'7d' | '30d' | '90d'>('7d');
+  const [productCount, setProductCount] = useState<number>(0);
+  const [inventorySummary, setInventorySummary] = useState<InventorySummary>({
+    totalActiveProducts: 0,
+    totalUnitsInStock: 0,
+    lowStockCount: 0,
+    outOfStockCount: 0,
+    totalCostValue: 0,
+  });
+
+  const companyId = currentCompany?.id || 'default_company';
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadStats() {
+      try {
+        const [prodRes, invSum] = await Promise.all([
+          productsService.list(companyId, { limit: 1 }),
+          inventoryService.getSummary(companyId),
+        ]);
+        if (isMounted) {
+          setProductCount(prodRes.total);
+          setInventorySummary(invSum);
+        }
+      } catch (e) {
+        console.error('Erro ao carregar estatísticas do dashboard:', e);
+      }
+    }
+    loadStats();
+    return () => {
+      isMounted = false;
+    };
+  }, [companyId]);
 
   // Format currency according to Brazilian Real standards
   const formatCurrency = (val: number) => {
@@ -44,6 +80,9 @@ export const DashboardPage: React.FC = () => {
   const firstName = profile?.full_name?.split(' ')[0] || 'Empreendedor';
 
   // Real initial checklist data derived from DB state
+  const hasProducts = productCount > 0;
+  const completedStepsCount = (currentCompany?.id ? 1 : 0) + (hasProducts ? 1 : 0);
+
   const checklist = [
     {
       id: 'company',
@@ -55,8 +94,10 @@ export const DashboardPage: React.FC = () => {
     {
       id: 'product',
       title: 'Cadastrar primeiro produto',
-      description: 'Adicione itens com preço de custo, venda e estoque',
-      completed: false,
+      description: hasProducts
+        ? `${productCount} produto(s) cadastrado(s) com sucesso`
+        : 'Adicione itens com preço de custo, venda e estoque',
+      completed: hasProducts,
       link: '/app/products',
     },
     {
@@ -228,9 +269,14 @@ export const DashboardPage: React.FC = () => {
             </CardDescription>
           </div>
           <div className="text-right hidden sm:block">
-            <span className="text-xs font-bold text-movi-graphite">1 de 4 concluídos</span>
+            <span className="text-xs font-bold text-movi-graphite">
+              {completedStepsCount} de 4 concluídos
+            </span>
             <div className="w-24 h-2 bg-border rounded-full mt-1.5 overflow-hidden">
-              <div className="w-1/4 h-full bg-movi-yellow" />
+              <div
+                className="h-full bg-movi-yellow transition-all duration-500"
+                style={{ width: `${(completedStepsCount / 4) * 100}%` }}
+              />
             </div>
           </div>
         </CardHeader>
@@ -276,6 +322,74 @@ export const DashboardPage: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* 3.1 VISÃO GERAL DE CATÁLOGO & ESTOQUE (DADOS REAIS DA ETAPA 02) */}
+      <div className="bg-white rounded-2xl border border-border p-5 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-base font-bold font-display text-movi-graphite">
+              Catálogo & Estoque em Tempo Real
+            </h3>
+            <p className="text-xs text-text-secondary">
+              Indicadores sincronizados com a sua base de produtos
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link to="/app/products">
+              <Button variant="secondary" size="sm">
+                Gerenciar Produtos
+              </Button>
+            </Link>
+            <Link to="/app/inventory">
+              <Button variant="outline" size="sm">
+                Ver Estoque
+              </Button>
+            </Link>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="p-3 bg-surface-secondary rounded-xl border border-border/60">
+            <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider block">
+              Produtos Ativos
+            </span>
+            <div className="text-xl font-bold font-display text-movi-graphite mt-1">
+              {inventorySummary.totalActiveProducts}
+            </div>
+            <span className="text-[10px] text-text-muted">de {productCount} cadastrados</span>
+          </div>
+
+          <div className="p-3 bg-surface-secondary rounded-xl border border-border/60">
+            <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider block">
+              Unidades Físicas
+            </span>
+            <div className="text-xl font-bold font-display text-movi-graphite mt-1">
+              {inventorySummary.totalUnitsInStock}
+            </div>
+            <span className="text-[10px] text-text-muted">em estoque</span>
+          </div>
+
+          <div className="p-3 bg-surface-secondary rounded-xl border border-border/60">
+            <span className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider block">
+              Estoque Baixo
+            </span>
+            <div className="text-xl font-bold font-display text-amber-600 mt-1">
+              {inventorySummary.lowStockCount}
+            </div>
+            <span className="text-[10px] text-amber-600/80">precisam reposição</span>
+          </div>
+
+          <div className="p-3 bg-surface-secondary rounded-xl border border-border/60">
+            <span className="text-[11px] font-semibold text-rose-700 uppercase tracking-wider block">
+              Sem Estoque
+            </span>
+            <div className="text-xl font-bold font-display text-rose-600 mt-1">
+              {inventorySummary.outOfStockCount}
+            </div>
+            <span className="text-[10px] text-rose-600/80">zerados</span>
+          </div>
+        </div>
+      </div>
 
       {/* 4. GRÁFICO DE VENDAS & ATIVIDADES RECENTES */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
